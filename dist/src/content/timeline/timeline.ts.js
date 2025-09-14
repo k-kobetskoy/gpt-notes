@@ -9,8 +9,8 @@ import {
 const PATH_HTML = "src/content/timeline/timeline.html";
 const PATH_CSS_LIGHT = "src/content/timeline/timeline.light.css";
 const PATH_CSS_DARK = "src/content/timeline/timeline.dark.css";
-const PAIR_GAP = 14;
-const BLOCK_GAP = 120;
+const NODE_HEIGHT = 9;
+const LINE_HEIGHT = 27;
 const TOP_PAD = 8;
 const INNER_BOTTOM_PAD = 24;
 const TL_MARGIN_X = 32;
@@ -30,6 +30,82 @@ let virtualH = 0;
 let cachedCss = { light: "", dark: "" };
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 const truncate = (s, n = 160) => !s ? "" : s.trim().replace(/\s+/g, " ").slice(0, n) + (s.trim().length > n ? "…" : "");
+const SPRITE_PATH = chrome.runtime.getURL("src/content/assets/icons.svg");
+const NODE_ICON_PATH = chrome.runtime.getURL("src/content/assets/node-icon.svg");
+const SPRITE_ID = "__gpt_notes_sprite__";
+const NODE_ICON_ID = "__gpt_notes_node_icon__";
+const ICON_PREFIX = "gpt-notes-";
+async function ensureSpriteInjected() {
+  if (document.getElementById(SPRITE_ID)) return;
+  try {
+    const response = await fetch(SPRITE_PATH);
+    const text = await response.text();
+    const prefixed = text.replace(/id="([^"]+)"/g, (_, id) => `id="${ICON_PREFIX}${id}"`).replace(/url\(#([^)]+)\)/g, (_, id) => `url(#${ICON_PREFIX}${id})`);
+    const doc = new DOMParser().parseFromString(prefixed, "image/svg+xml");
+    const sprite = doc.documentElement;
+    sprite.id = SPRITE_ID;
+    sprite.style.display = "none";
+    document.documentElement.prepend(sprite);
+    console.log("[Timeline Debug] SVG sprite injected successfully");
+  } catch (error) {
+    console.error("[Timeline Debug] Failed to inject SVG sprite:", error);
+  }
+}
+async function ensureNodeIconInjected() {
+  if (document.getElementById(NODE_ICON_ID)) return;
+  try {
+    const response = await fetch(NODE_ICON_PATH);
+    const text = await response.text();
+    const doc = new DOMParser().parseFromString(text, "image/svg+xml");
+    const nodeIcon = doc.documentElement;
+    nodeIcon.id = NODE_ICON_ID;
+    nodeIcon.style.display = "none";
+    document.documentElement.prepend(nodeIcon);
+    console.log("[Timeline Debug] Node icon injected successfully");
+  } catch (error) {
+    console.error("[Timeline Debug] Failed to inject node icon:", error);
+  }
+}
+function makeIcon(name, size = 16, label = null) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("width", size.toString());
+  svg.setAttribute("height", size.toString());
+  if (label) {
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", label);
+  } else {
+    svg.setAttribute("aria-hidden", "true");
+  }
+  const use = document.createElementNS(ns, "use");
+  use.setAttribute("href", `#${ICON_PREFIX}${name}`);
+  svg.appendChild(use);
+  return svg;
+}
+function makeNodeIcon(label = null) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("width", "9");
+  svg.setAttribute("height", "9");
+  svg.setAttribute("viewBox", "0 0 9 9");
+  svg.setAttribute("fill", "none");
+  if (label) {
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", label);
+  } else {
+    svg.setAttribute("aria-hidden", "true");
+  }
+  const rect = document.createElementNS(ns, "rect");
+  rect.setAttribute("x", "-0.734375");
+  rect.setAttribute("y", "4.48633");
+  rect.setAttribute("width", "7.29226");
+  rect.setAttribute("height", "7.29226");
+  rect.setAttribute("rx", "2");
+  rect.setAttribute("transform", "rotate(-45 -0.734375 4.48633)");
+  rect.setAttribute("fill", "currentColor");
+  svg.appendChild(rect);
+  return svg;
+}
 function computeTurns(nodes) {
   const list = nodes.map((n) => n.turn).filter((t) => Number.isFinite(t));
   if (!list.length) return { min: 0, max: 0 };
@@ -81,27 +157,24 @@ function watchThemeChanges() {
   };
 }
 function selectChatHost() {
-  const mainWithTurns = document.querySelector('main:has([data-testid^="conversation-turn-"])') || document.querySelector('[role="main"]:has([data-testid^="conversation-turn-"])');
-  if (mainWithTurns) return mainWithTurns;
+  const mainElement = document.querySelector("main");
+  if (mainElement) {
+    return mainElement;
+  }
   const firstTurn = document.querySelector('[data-testid^="conversation-turn-"]');
   if (!firstTurn) return null;
-  let el = firstTurn.parentElement;
-  while (el && el.parentElement && el.getBoundingClientRect().width < window.innerWidth * 0.35) {
-    el = el.parentElement;
-  }
-  return el;
+  return firstTurn.parentElement?.parentElement ?? null;
 }
 function positionTimelineAgainst(host) {
   if (!rootEl) return;
   const hostRect = host.getBoundingClientRect();
-  const firstTurn = document.querySelector('[data-testid^="conversation-turn-"]');
-  const firstTurnRect = firstTurn?.getBoundingClientRect();
-  const headerOffset = Math.max(0, firstTurnRect ? firstTurnRect.top - hostRect.top : 0);
+  const pageHeader = document.querySelector('#page-header, header[id="page-header"], .sticky.top-0');
+  const headerHeight = pageHeader ? pageHeader.getBoundingClientRect().height : 0;
   const tlWidth = rootEl.getBoundingClientRect().width || 28;
   const left = Math.max(0, hostRect.left - tlWidth + TL_MARGIN_X);
-  const top = Math.max(0, hostRect.top + headerOffset);
+  const top = Math.max(0, hostRect.top + headerHeight);
   const maxBottom = Math.min(hostRect.bottom, window.innerHeight - SCREEN_BOTTOM_GAP);
-  const height = Math.max(120, maxBottom - top);
+  const height = Math.max(120, maxBottom - top - headerHeight);
   rootEl.style.position = "fixed";
   rootEl.style.left = `${left}px`;
   rootEl.style.top = `${top}px`;
@@ -110,7 +183,9 @@ function positionTimelineAgainst(host) {
 }
 function anchorOrHide() {
   const host = selectChatHost();
-  if (!rootEl) return;
+  if (!rootEl) {
+    return;
+  }
   if (!host) {
     rootEl.style.display = "none";
     return;
@@ -122,20 +197,13 @@ function buildLayout(nodes) {
   const turns = nodes.map((n) => n.turn);
   const ys = [];
   let y = TOP_PAD;
-  let prevRole = null;
   nodes.forEach((n, idx) => {
-    if (idx === 0) {
-      ys.push(y);
-      prevRole = n.role;
-      return;
-    }
-    if (n.role === "assistant") {
-      y += PAIR_GAP;
-    } else {
-      y += BLOCK_GAP;
-    }
     ys.push(y);
-    prevRole = n.role;
+    if (n.role === "user") {
+      y += NODE_HEIGHT;
+    } else {
+      y += LINE_HEIGHT;
+    }
   });
   const canvasH = y + INNER_BOTTOM_PAD;
   return { turns, ys, canvasH };
@@ -161,21 +229,33 @@ function render() {
   const canvas = document.createElement("div");
   canvas.className = "gpt-notes-tl__canvas";
   canvas.style.height = `${virtualH}px`;
-  const rail = document.createElement("div");
-  rail.className = "gpt-notes-tl__rail";
-  canvas.appendChild(rail);
+  canvas.style.position = "relative";
+  canvas.style.width = "100%";
   currentNodes.forEach((n, i) => {
     const y = layoutYs[i];
-    const dot = document.createElement("div");
-    dot.className = `gpt-notes-tl__dot ${n.role === "user" ? "gpt-notes-tl__dot--user" : "gpt-notes-tl__dot--assistant"}`;
-    dot.style.top = `${y}px`;
-    dot.addEventListener("mouseenter", (ev) => showTipForNode(ev, n));
-    dot.addEventListener("mouseleave", hideTip);
-    dot.addEventListener("click", async (ev) => {
+    const elementContainer = document.createElement("div");
+    elementContainer.className = `gpt-notes-tl__element gpt-notes-tl__element--${n.role}`;
+    elementContainer.style.position = "absolute";
+    elementContainer.style.top = `${y}px`;
+    elementContainer.style.left = "50%";
+    elementContainer.style.transform = "translateX(-50%)";
+    let element;
+    if (n.role === "user") {
+      element = makeNodeIcon(`User message - turn ${n.turn}`);
+      element.setAttribute("class", "gpt-notes-tl__node");
+    } else {
+      element = document.createElement("div");
+      element.className = "gpt-notes-tl__line";
+      element.setAttribute("aria-label", `Assistant reply - turn ${n.turn}`);
+    }
+    elementContainer.appendChild(element);
+    elementContainer.addEventListener("mouseenter", (ev) => showTipForNode(ev, n));
+    elementContainer.addEventListener("mouseleave", hideTip);
+    elementContainer.addEventListener("click", async (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
       try {
-        console.log("Timeline dot clicked - turn:", n.turn, "fingerprint:", n.fingerprint);
+        console.log("Timeline element clicked - turn:", n.turn, "fingerprint:", n.fingerprint);
         await warmJumpToApprox(n.turn);
         const ok = await onTimelineClick(n.turn, n.fingerprint || "", void 0);
         if (!ok) {
@@ -191,15 +271,23 @@ function render() {
         console.error("Timeline click error:", error);
       }
     });
-    canvas.appendChild(dot);
+    canvas.appendChild(elementContainer);
     if (n.bookmarks?.length) {
       n.bookmarks.forEach((bm, idx) => {
-        const m = document.createElement("div");
-        m.className = "gpt-notes-tl__bm";
-        m.style.top = `${y + (idx ? idx * 8 : 0)}px`;
-        m.addEventListener("mouseenter", (ev) => showTipForBookmark(ev, n, bm));
-        m.addEventListener("mouseleave", hideTip);
-        m.addEventListener("click", async (ev) => {
+        const bookmarkEl = document.createElement("div");
+        bookmarkEl.className = "gpt-notes-tl__bookmark";
+        bookmarkEl.style.position = "absolute";
+        bookmarkEl.style.top = `${y + idx * 8}px`;
+        bookmarkEl.style.left = "50%";
+        bookmarkEl.style.transform = "translateX(-50%)";
+        bookmarkEl.style.width = "6px";
+        bookmarkEl.style.height = "6px";
+        bookmarkEl.style.backgroundColor = "var(--bookmark-color, #ff6b35)";
+        bookmarkEl.style.borderRadius = "50%";
+        bookmarkEl.style.marginLeft = "8px";
+        bookmarkEl.addEventListener("mouseenter", (ev) => showTipForBookmark(ev, n, bm));
+        bookmarkEl.addEventListener("mouseleave", hideTip);
+        bookmarkEl.addEventListener("click", async (ev) => {
           ev.preventDefault();
           ev.stopPropagation();
           await onTimelineClick(n.turn, n.fingerprint || "", {
@@ -211,7 +299,7 @@ function render() {
             relStart: bm.relStart
           });
         });
-        canvas.appendChild(m);
+        canvas.appendChild(bookmarkEl);
       });
     }
   });
@@ -280,6 +368,8 @@ export async function mountTimeline() {
   const html = await loadAssets();
   applyThemeCss();
   const unwatch = watchThemeChanges();
+  await ensureSpriteInjected();
+  await ensureNodeIconInjected();
   if (!document.getElementById("gpt-notes-tl")) {
     console.log("Mounting timeline HTML...");
     const tmp = document.createElement("div");

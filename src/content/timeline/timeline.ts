@@ -17,9 +17,9 @@ const PATH_HTML = 'src/content/timeline/timeline.html';
 const PATH_CSS_LIGHT = 'src/content/timeline/timeline.light.css';
 const PATH_CSS_DARK  = 'src/content/timeline/timeline.dark.css';
 
-// spacing
-const PAIR_GAP = 14;          // distance inside a Q/A pair (user -> assistant)
-const BLOCK_GAP = 120;        // distance from an answer to the next question (assistant -> next user)
+// spacing - for connected timeline
+const NODE_HEIGHT = 9;        // height of diamond node
+const LINE_HEIGHT = 27;       // height of line segment  
 const TOP_PAD = 8;            // inner top padding inside the canvas
 const INNER_BOTTOM_PAD = 24;  // inner bottom padding inside the canvas
 
@@ -52,6 +52,103 @@ let cachedCss: Record<'light'|'dark', string> = { light: '', dark: '' };
 // ------------------------------
 const clamp = (x: number, a: number, b: number) => Math.max(a, Math.min(b, x));
 const truncate = (s: string, n = 160) => !s ? '' : (s.trim().replace(/\s+/g,' ').slice(0, n) + (s.trim().length > n ? '…' : ''));
+
+// Icon creation utility - inline sprite approach
+const SPRITE_PATH = chrome.runtime.getURL("src/content/assets/icons.svg");
+const NODE_ICON_PATH = chrome.runtime.getURL("src/content/assets/node-icon.svg");
+const SPRITE_ID = "__gpt_notes_sprite__";
+const NODE_ICON_ID = "__gpt_notes_node_icon__";
+const ICON_PREFIX = "gpt-notes-";
+
+async function ensureSpriteInjected(): Promise<void> {
+  if (document.getElementById(SPRITE_ID)) return;
+
+  try {
+    const response = await fetch(SPRITE_PATH);
+    const text = await response.text();
+
+    // Prefix IDs to avoid conflicts with the page
+    const prefixed = text
+      .replace(/id="([^"]+)"/g, (_, id) => `id="${ICON_PREFIX}${id}"`)
+      .replace(/url\(#([^)]+)\)/g, (_, id) => `url(#${ICON_PREFIX}${id})`);
+
+    const doc = new DOMParser().parseFromString(prefixed, "image/svg+xml");
+    const sprite = doc.documentElement; // <svg> with <symbol> inside
+    sprite.id = SPRITE_ID;
+    sprite.style.display = "none";
+
+    // Inject into document head for global access
+    document.documentElement.prepend(sprite);
+    console.log('[Timeline Debug] SVG sprite injected successfully');
+  } catch (error) {
+    console.error('[Timeline Debug] Failed to inject SVG sprite:', error);
+  }
+}
+
+async function ensureNodeIconInjected(): Promise<void> {
+  if (document.getElementById(NODE_ICON_ID)) return;
+
+  try {
+    const response = await fetch(NODE_ICON_PATH);
+    const text = await response.text();
+
+    const doc = new DOMParser().parseFromString(text, "image/svg+xml");
+    const nodeIcon = doc.documentElement; // <svg> element
+    nodeIcon.id = NODE_ICON_ID;
+    nodeIcon.style.display = "none";
+
+    // Inject into document head for global access
+    document.documentElement.prepend(nodeIcon);
+    console.log('[Timeline Debug] Node icon injected successfully');
+  } catch (error) {
+    console.error('[Timeline Debug] Failed to inject node icon:', error);
+  }
+}
+
+function makeIcon(name: string, size = 16, label: string | null = null): SVGElement {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("width", size.toString());
+  svg.setAttribute("height", size.toString());
+  if (label) {
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", label);
+  } else {
+    svg.setAttribute("aria-hidden", "true");
+  }
+
+  const use = document.createElementNS(ns, "use");
+  use.setAttribute("href", `#${ICON_PREFIX}${name}`); // No chrome-extension:// URL needed
+  svg.appendChild(use);
+  return svg;
+}
+
+function makeNodeIcon(label: string | null = null): SVGElement {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("width", "9");
+  svg.setAttribute("height", "9");
+  svg.setAttribute("viewBox", "0 0 9 9");
+  svg.setAttribute("fill", "none");
+  if (label) {
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", label);
+  } else {
+    svg.setAttribute("aria-hidden", "true");
+  }
+
+  const rect = document.createElementNS(ns, "rect");
+  rect.setAttribute("x", "-0.734375");
+  rect.setAttribute("y", "4.48633");
+  rect.setAttribute("width", "7.29226");
+  rect.setAttribute("height", "7.29226");
+  rect.setAttribute("rx", "2");
+  rect.setAttribute("transform", "rotate(-45 -0.734375 4.48633)");
+  rect.setAttribute("fill", "currentColor");
+  
+  svg.appendChild(rect);
+  return svg;
+}
 
 function computeTurns(nodes: MapNode[]) {
   const list = nodes.map(n => n.turn).filter(t => Number.isFinite(t)) as number[];
@@ -113,26 +210,17 @@ function watchThemeChanges() {
 // Anchor to the chat column (avoid header overlap, keep bottom gap)
 // ------------------------------
 function selectChatHost(): HTMLElement | null {
-  const mainWithTurns =
-    document.querySelector<HTMLElement>('main:has([data-testid^="conversation-turn-"])') ||
-    document.querySelector<HTMLElement>('[role="main"]:has([data-testid^="conversation-turn-"])')
-
-  if (mainWithTurns) {
-    console.log('[selectChatHost] mainWithTurns', mainWithTurns);
-    return mainWithTurns;
+  // Target the main element directly
+  const mainElement = document.querySelector<HTMLElement>('main');
+  if (mainElement) {
+    return mainElement;
   }
-
+  
+  // Fallback: look for conversation turns and climb up
   const firstTurn = document.querySelector<HTMLElement>('[data-testid^="conversation-turn-"]');
   if (!firstTurn) return null;
 
-  // climb to a reasonably wide container
-  let el: HTMLElement | null = firstTurn.parentElement as HTMLElement | null;
-  while (el && el.parentElement && el.getBoundingClientRect().width < (window.innerWidth * 0.35)) {
-    el = el.parentElement as HTMLElement | null;
-  }
-
-  console.log('[selectChatHost] el', el);
-  return el;
+  return firstTurn.parentElement?.parentElement ?? null;
 }
 
 /** Measures header/padding above the first turn inside the host and anchors beneath it. */
@@ -140,31 +228,36 @@ function positionTimelineAgainst(host: HTMLElement) {
   if (!rootEl) return;
 
   const hostRect = host.getBoundingClientRect();
-  const firstTurn = document.querySelector<HTMLElement>('[data-testid^="conversation-turn-"]');
-  const firstTurnRect = firstTurn?.getBoundingClientRect();
+  
+  // Find the page header to calculate its height
+  const pageHeader = document.querySelector<HTMLElement>('#page-header, header[id="page-header"], .sticky.top-0');
+  const headerHeight = pageHeader ? pageHeader.getBoundingClientRect().height : 0;
 
-  // Distance from host top to the first turn (treat as header height)
-  const headerOffset = Math.max(0, (firstTurnRect ? (firstTurnRect.top - hostRect.top) : 0));
 
-  // Place to the LEFT of the chat host, outside, with margin
+  // Place to the LEFT of the main element, outside, with margin
   const tlWidth = (rootEl.getBoundingClientRect().width || 28);
   const left = Math.max(0, hostRect.left - tlWidth + TL_MARGIN_X);
 
-  // Top is host.top + headerOffset; Height is limited by both host bottom and viewport bottom - SCREEN_BOTTOM_GAP
-  const top = Math.max(0, hostRect.top + headerOffset);
+  // Top position: account for header height
+  const top = Math.max(0, hostRect.top + headerHeight);
+  
+  // Height: from top position to bottom of host, minus screen bottom gap and header height
   const maxBottom = Math.min(hostRect.bottom, window.innerHeight - SCREEN_BOTTOM_GAP);
-  const height = Math.max(120, maxBottom - top); // keep at least some height
+  const height = Math.max(120, maxBottom - top - headerHeight);
 
   rootEl.style.position = 'fixed';
   rootEl.style.left = `${left}px`;
   rootEl.style.top = `${top}px`;
   rootEl.style.bottom = 'auto';
   rootEl.style.height = `${height}px`;
+  
 }
 
 function anchorOrHide() {
   const host = selectChatHost();
-  if (!rootEl) return;
+  if (!rootEl) {
+    return;
+  }
   if (!host) {
     rootEl.style.display = 'none';
     return;
@@ -177,31 +270,23 @@ function anchorOrHide() {
 // Layout: fixed spacing (pair vs next question)
 // ------------------------------
 function buildLayout(nodes: MapNode[]) {
-  // nodes are already per-turn sorted in getMapNodes()
+  // Create connected timeline: node->line->node->line...
   const turns = nodes.map(n => n.turn);
   const ys: number[] = [];
 
   let y = TOP_PAD;
-  let prevRole: MapNode['role'] | null = null;
 
   nodes.forEach((n, idx) => {
-    if (idx === 0) {
-      // first message at TOP_PAD
-      ys.push(y);
-      prevRole = n.role;
-      return;
-    }
-
-    if (n.role === 'assistant') {
-      // same pair (close to user)
-      y += PAIR_GAP;
-    } else {
-      // new question block (fixed distance from previous answer)
-      y += BLOCK_GAP;
-    }
-
     ys.push(y);
-    prevRole = n.role;
+    
+    // Move to next position based on current element type
+    if (n.role === 'user') {
+      // User node: move down by node height (diamond is 9px tall)
+      y += NODE_HEIGHT;
+    } else {
+      // Assistant line: move down by line height (line is 27px tall)
+      y += LINE_HEIGHT;
+    }
   });
 
   const canvasH = y + INNER_BOTTOM_PAD;
@@ -236,26 +321,46 @@ function render() {
   const canvas = document.createElement('div');
   canvas.className = 'gpt-notes-tl__canvas';
   canvas.style.height = `${virtualH}px`;
+  canvas.style.position = 'relative';
+  canvas.style.width = '100%';
 
-  const rail = document.createElement('div');
-  rail.className = 'gpt-notes-tl__rail';
-  canvas.appendChild(rail);
-
-  // dots + bookmarks
+  // Create timeline elements with new icon-based design
   currentNodes.forEach((n, i) => {
     const y = layoutYs[i];
 
-    const dot = document.createElement('div');
-    dot.className = `gpt-notes-tl__dot ${n.role === 'user' ? 'gpt-notes-tl__dot--user' : 'gpt-notes-tl__dot--assistant'}`;
-    dot.style.top = `${y}px`;
-    dot.addEventListener('mouseenter', (ev) => showTipForNode(ev as MouseEvent, n));
-    dot.addEventListener('mouseleave', hideTip);
-    dot.addEventListener('click', async (ev) => {
+    // Create container for the timeline element
+    const elementContainer = document.createElement('div');
+    elementContainer.className = `gpt-notes-tl__element gpt-notes-tl__element--${n.role}`;
+    elementContainer.style.position = 'absolute';
+    elementContainer.style.top = `${y}px`;
+    elementContainer.style.left = '50%';
+    elementContainer.style.transform = 'translateX(-50%)';
+
+    // Create the appropriate element based on role
+    let element: Element;
+    if (n.role === 'user') {
+      // User messages get dedicated node icons (questions) - 9x9 diamonds
+      element = makeNodeIcon(`User message - turn ${n.turn}`);
+      element.setAttribute('class', 'gpt-notes-tl__node');
+    } else {
+      // Assistant messages get CSS line boxes (answers) - 1x27 vertical lines  
+      element = document.createElement('div');
+      element.className = 'gpt-notes-tl__line';
+      element.setAttribute('aria-label', `Assistant reply - turn ${n.turn}`);
+      // CSS will handle the styling
+    }
+
+    elementContainer.appendChild(element);
+
+    // Add event listeners
+    elementContainer.addEventListener('mouseenter', (ev) => showTipForNode(ev as MouseEvent, n));
+    elementContainer.addEventListener('mouseleave', hideTip);
+    elementContainer.addEventListener('click', async (ev) => {
       ev.preventDefault(); 
       ev.stopPropagation();
       
       try {
-        console.log('Timeline dot clicked - turn:', n.turn, 'fingerprint:', n.fingerprint);
+        console.log('Timeline element clicked - turn:', n.turn, 'fingerprint:', n.fingerprint);
         await warmJumpToApprox(n.turn);
         const ok = await onTimelineClick(n.turn, n.fingerprint || '', undefined);
         if (!ok) {
@@ -271,24 +376,36 @@ function render() {
         console.error('Timeline click error:', error);
       }
     });
-    canvas.appendChild(dot);
 
+    canvas.appendChild(elementContainer);
+
+    // Add bookmarks if any
     if (n.bookmarks?.length) {
       n.bookmarks.forEach((bm, idx) => {
-        const m = document.createElement('div');
-        m.className = 'gpt-notes-tl__bm';
-        m.style.top = `${y + (idx ? idx * 8 : 0)}px`;
-        m.addEventListener('mouseenter', (ev) => showTipForBookmark(ev as MouseEvent, n, bm));
-        m.addEventListener('mouseleave', hideTip);
-        m.addEventListener('click', async (ev) => {
-          ev.preventDefault(); ev.stopPropagation();
+        const bookmarkEl = document.createElement('div');
+        bookmarkEl.className = 'gpt-notes-tl__bookmark';
+        bookmarkEl.style.position = 'absolute';
+        bookmarkEl.style.top = `${y + (idx * 8)}px`;
+        bookmarkEl.style.left = '50%';
+        bookmarkEl.style.transform = 'translateX(-50%)';
+        bookmarkEl.style.width = '6px';
+        bookmarkEl.style.height = '6px';
+        bookmarkEl.style.backgroundColor = 'var(--bookmark-color, #ff6b35)';
+        bookmarkEl.style.borderRadius = '50%';
+        bookmarkEl.style.marginLeft = '8px'; // Offset from the main timeline
+
+        bookmarkEl.addEventListener('mouseenter', (ev) => showTipForBookmark(ev as MouseEvent, n, bm));
+        bookmarkEl.addEventListener('mouseleave', hideTip);
+        bookmarkEl.addEventListener('click', async (ev) => {
+          ev.preventDefault(); 
+          ev.stopPropagation();
           await onTimelineClick(n.turn, n.fingerprint || '', {
             start: bm.start, end: bm.end,
             len: Math.max(1, (bm.end ?? 0) - (bm.start ?? 0)),
             anchor: (bm as any).anchor, anchorHash: (bm as any).anchorHash, relStart: (bm as any).relStart
           });
         });
-        canvas.appendChild(m);
+        canvas.appendChild(bookmarkEl);
       });
     }
   });
@@ -371,10 +488,14 @@ function hideTip() {
 // Mount / Unmount
 // ------------------------------
 export async function mountTimeline() {
-  // 1) Load assets (html + css themes)
+  // 1) Load assets (html + css themes) and inject SVG sprite
   const html = await loadAssets();
   applyThemeCss();
   const unwatch = watchThemeChanges();
+  
+  // Inject SVG sprite and node icon before creating timeline elements
+  await ensureSpriteInjected();
+  await ensureNodeIconInjected();
 
   // 2) Mount HTML once
   if (!document.getElementById('gpt-notes-tl')) {

@@ -21,7 +21,8 @@
           "src/content/toolbar/toolbar.html",
           "src/content/timeline/timeline.html",
           "src/content/timeline/timeline.light.css",
-          "src/content/timeline/timeline.dark.css"
+          "src/content/timeline/timeline.dark.css",
+          "src/content/assets/node-icon.svg"
         ],
         "matches": ["https://chat.openai.com/*", "https://chatgpt.com/*"]
       }

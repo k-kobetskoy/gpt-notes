@@ -8,6 +8,11 @@
     --dot-user: #6aa3ff;           /* slightly brighter for dark bg */
     --dot-assistant: #2bd3a0;
     --bm: #ffb34d;
+    
+    --node-color: #A8AEB3;
+    --line-color: #E3E3E3;
+    --line-hover-color: #5E8CFF;
+    --bookmark-color: #ffb34d;
   
     --rail-a: #3a3f48;
     --rail-b: #2e333a;
@@ -81,4 +86,56 @@
   .gpt-notes-tl__tip .tt-note { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--tip-border); color: #cbd5e1; }
   
   .gpt-notes-tl__dot--active { box-shadow: 0 0 0 2px #cbd5e1, 0 0 0 4px rgba(15,23,42,.9); }
+  
+  /* New icon-based timeline elements */
+  .gpt-notes-tl__element {
+    cursor: pointer;
+    transition: all 0.2s ease;
+    /* Larger hover area - 3px padding on all sides */
+    padding: 3px;
+    margin: -3px;
+  }
+  
+  .gpt-notes-tl__element:hover {
+    /* Remove the scale transform to handle it per element type */
+  }
+  
+  .gpt-notes-tl__node {
+    color: var(--node-color);
+    display: block;
+    transition: all 0.2s ease;
+  }
+  
+  .gpt-notes-tl__line {
+    width: 1px;
+    height: 27px;
+    background-color: var(--line-color);
+    display: block;
+    transition: all 0.2s ease;
+  }
+  
+  /* Node hover effects: 10% bigger + white 1px stroke */
+  .gpt-notes-tl__element:hover .gpt-notes-tl__node {
+    color: var(--node-color);
+    transform: scale(1.1);
+    filter: drop-shadow(0 0 0 1px white);
+  }
+  
+  /* Line hover effects: 3px wide + blue color */
+  .gpt-notes-tl__element:hover .gpt-notes-tl__line {
+    width: 3px;
+    background-color: var(--line-hover-color);
+    /* Center the wider line */
+    margin-left: -1px;
+  }
+  
+  .gpt-notes-tl__bookmark {
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  
+  .gpt-notes-tl__bookmark:hover {
+    transform: translateX(-50%) scale(1.3);
+    background-color: var(--bookmark-color) !important;
+  }
   
