@@ -1,0 +1,29 @@
+{
+    "manifest_version": 3,
+    "name": "Gpt-Notes",
+    "version": "0.1.0",
+    "description": "Сохраняй заметки прямо в ChatGPT",
+    "permissions": ["storage", "sidePanel", "scripting", "activeTab"],
+    "host_permissions": ["https://chat.openai.com/*", "https://chatgpt.com/*"],
+    "background": { "service_worker": "src/sw.ts", "type": "module" },
+    "content_scripts": [
+      {
+        "matches": ["https://chat.openai.com/*", "https://chatgpt.com/*"],
+        "js": ["src/content/content.ts"],
+        "run_at": "document_start"
+      }
+    ],
+    "side_panel": { "default_path": "src/sidepanel/index.html" },
+    "web_accessible_resources": [
+      {
+        "resources": [
+          "src/content/toolbar/toolbar.css",
+          "src/content/toolbar/toolbar.html",
+          "src/content/timeline/timeline.html",
+          "src/content/timeline/timeline.light.css",
+          "src/content/timeline/timeline.dark.css"
+        ],
+        "matches": ["https://chat.openai.com/*", "https://chatgpt.com/*"]
+      }
+    ]
+  }
